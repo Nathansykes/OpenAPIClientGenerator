@@ -1,6 +1,4 @@
-﻿using OpenAPIClientGenerator.DocumentReaders;
-
-namespace OpenAPIClientGenerator.Tests;
+﻿namespace OpenAPIClientGenerator.Tests;
 
 public class OpenApiDocumentReaderTests
 {
@@ -13,21 +11,7 @@ public class OpenApiDocumentReaderTests
         using var stream = assembly.GetManifestResourceStream(resourceName) ?? throw new InvalidOperationException("Missing Assembly Resource");
         using var resourceReader = new StreamReader(stream);
         var content = await resourceReader.ReadToEndAsync();
-        var apiDocumentReader = new StringOpenAPIDocumentReader(content);
-
-        //act
-        var document = await apiDocumentReader.ReadDocumentAsync();
-
-        //assert
-        Assert.NotNull(document); //TODO: Add more assertions to validate the content of the document
-    }
-
-    [Fact]
-    public async Task ReadFromHttp()
-    {
-        //arrange
-        const string url = "https://raw.githubusercontent.com/swagger-api/swagger-petstore/refs/heads/master/src/main/resources/openapi.yaml"; //TODO: Use fixed release URL instead of branch
-        var apiDocumentReader = new HttpOpenAPIDocumentReader(url);
+        var apiDocumentReader = new OpenAPIDocumentReader(content);
 
         //act
         var document = await apiDocumentReader.ReadDocumentAsync();

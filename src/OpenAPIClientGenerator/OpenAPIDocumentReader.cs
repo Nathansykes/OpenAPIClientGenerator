@@ -1,13 +1,13 @@
 ﻿using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Readers;
 
-namespace OpenAPIClientGenerator.DocumentReaders;
+namespace OpenAPIClientGenerator;
 
-public class StringOpenAPIDocumentReader : IOpenApiDocumentReader
+public class OpenAPIDocumentReader
 {
     private readonly string _contents;
 
-    public StringOpenAPIDocumentReader(string contents)
+    public OpenAPIDocumentReader(string contents)
     {
         _contents = contents;
     }
