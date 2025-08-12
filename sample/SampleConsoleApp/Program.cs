@@ -2,9 +2,9 @@
 
 internal class Program
 {
-    private static void Main(string[] args)
+    private static async Task Main(string[] args)
     {
         var client = new MyApiClient();
-        Console.WriteLine(client.SpecPreview);
+        await client.UpdatePetAsync();
     }
 }

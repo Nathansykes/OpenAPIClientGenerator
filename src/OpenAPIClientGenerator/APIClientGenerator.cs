@@ -1,4 +1,5 @@
 ﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Readers;
@@ -53,8 +54,8 @@ internal class APIClientGenerator : IIncrementalGenerator
                 var (classInfo, files) = data;
                 var match = files.FirstOrDefault(f => f.Path.EndsWith(classInfo?.FileName, StringComparison.OrdinalIgnoreCase));
 
-                var reader = new OpenAPIDocumentReader(match.Content);
-                var apiDocument = reader.ReadDocument();
+                var reader = new OpenApiStringReader();
+                var apiDocument = reader.Read(match.Content, out OpenApiDiagnostic? diag);
 
                 return (classInfo?.Symbol, SpecContent: match.Content, ApiDocument: apiDocument);
             });
@@ -62,11 +63,15 @@ internal class APIClientGenerator : IIncrementalGenerator
         // Step 5: Generate the client
         context.RegisterSourceOutput(joined, (spc, data) =>
         {
-            var ns = data.Symbol?.ContainingNamespace.ToDisplayString();
-            var name = data.Symbol?.Name;
+            if (data.Symbol is null)
+                return;
+            var namespaceName = data.Symbol.ContainingNamespace.ToDisplayString();
+            var className = data.Symbol.Name;
+            if (className is null)
+                return;
 
-            List<OpenAPIDocumentModelClassDefinition> models = new();
-            List< OpenAPIDocumentOperationMethodDefinition> operations = new();
+            HashSet<OpenAPIDocumentModelClassDefinition> models = [];
+            HashSet<OpenAPIDocumentOperationMethodDefinition> operations = [];
             foreach (KeyValuePair<string, OpenApiPathItem> path in data.ApiDocument.Paths)
             {
                 foreach (KeyValuePair<OperationType, OpenApiOperation> operation in path.Value.Operations)
@@ -74,10 +79,10 @@ internal class APIClientGenerator : IIncrementalGenerator
                     var methodName = GetMethodName(path, operation);
                     var methodContent = $$"""
                     /// <summary> {{operation.Value.Summary}} <br /> {{operation.Value.Description}} </summary>
-                    /// <remarks> {{operation.Key}} {{path.Key}} </remarks>
+                    /// <remarks> {{operation.Key.ToString().ToUpper()}} {{path.Key}} </remarks>
                     public async Task {{methodName}}Async()
                     {
-                        //TODO: implement
+                        throw new NotImplementedException("{{methodName}} is not implemented yet.");
                     }
                     """;
                     operations.Add(new OpenAPIDocumentOperationMethodDefinition
@@ -90,60 +95,47 @@ internal class APIClientGenerator : IIncrementalGenerator
                 }
             }
 
-            var op = operations.FirstOrDefault()?.MethodContent;
+            var methods = operations.Select(op => SyntaxFactory.ParseMemberDeclaration(op.MethodContent)!);
 
-            // TODO: parse data.SpecContent with OpenAPI parser here
-            spc.AddSource($"{name}.g.cs", $$"""
-                namespace {{ns}}
-                {
-                    public partial class {{name}}
-                    {
-                        public string SpecPreview => @"{{Escape(data.SpecContent)}}";
+            var classDecl = SyntaxFactory.ClassDeclaration(className)
+                .AddModifiers(SyntaxFactory.Token(SyntaxKind.PublicKeyword), SyntaxFactory.Token(SyntaxKind.PartialKeyword));
 
-                        {{op}}
-                    }
-                }
-                """);
+            foreach (var method in methods)
+            {
+                classDecl = classDecl.AddMembers(method);
+            }
+
+            var nsDecl = SyntaxFactory.NamespaceDeclaration(SyntaxFactory.ParseName(namespaceName))
+                .AddMembers(classDecl);
+
+            var formattedCode = nsDecl.NormalizeWhitespace().ToFullString();
+
+            spc.AddSource($"{className}.g.cs", formattedCode);
         });
     }
 
-    private static string Escape(string s) => s.Replace("\"", "\"\"");
 
 
     private static string GetMethodName(KeyValuePair<string, OpenApiPathItem> path, KeyValuePair<OperationType, OpenApiOperation> operation)
     {
         if (!string.IsNullOrWhiteSpace(operation.Value.OperationId))
-            return operation.Value.OperationId;
+            return operation.Value.OperationId.UpperCaseFirstChar();
 
         return "";
     }
     private class OpenAPIDocumentModelClassDefinition
     {
-        public static OpenAPIDocumentModelClassDefinition Create()
-        {
-            var model = new OpenAPIDocumentModelClassDefinition();
-
-
-            return model;
-        }
         public string SchemaName { get; set; } = null!;
         public string ClassName { get; set; } = null!;
         public string ClassContent { get; set; } = null!;
 
         public override int GetHashCode()
         {
-            return (ClassContent ?? "").GetHashCode();
+            return ClassContent.GetHashCode();
         }
     }
     private class OpenAPIDocumentOperationMethodDefinition
     {
-        public static OpenAPIDocumentModelClassDefinition Create()
-        {
-            var model = new OpenAPIDocumentModelClassDefinition();
-
-
-            return model;
-        }
         public string PathName { get; set; } = null!;
         public OperationType OperationName { get; set; }
         public string MethodName { get; set; } = null!;
@@ -151,8 +143,18 @@ internal class APIClientGenerator : IIncrementalGenerator
 
         public override int GetHashCode()
         {
-            return (MethodContent ?? "").GetHashCode();
+            return MethodContent.GetHashCode();
         }
+    }
+}
+
+file static class Extensions
+{
+    public static string UpperCaseFirstChar(this string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+        return char.ToUpper(value[0]) + value.Substring(1);
     }
 }
 
