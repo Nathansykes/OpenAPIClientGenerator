@@ -14,7 +14,7 @@ public class OpenApiDocumentReaderTests
         var apiDocumentReader = new OpenAPIDocumentReader(content);
 
         //act
-        var document = await apiDocumentReader.ReadDocumentAsync();
+        var document = apiDocumentReader.ReadDocument();
 
         //assert
         Assert.NotNull(document); //TODO: Add more assertions to validate the content of the document
