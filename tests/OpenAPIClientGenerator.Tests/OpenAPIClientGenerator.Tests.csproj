@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\src\OpenAPIClientGenerator\OpenAPIClientGenerator.csproj" />
+    <ProjectReference Include="..\..\src\OpenAPIClientGenerator\OpenAPIClientGenerator.csproj" />
   </ItemGroup>
 
   <ItemGroup>
