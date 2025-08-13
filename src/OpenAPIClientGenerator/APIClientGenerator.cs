@@ -26,7 +26,11 @@ internal class APIClientGenerator : IIncrementalGenerator
         var openApiFiles = additionalFiles.Select((file, cancellationToken) =>
         {
             var text = file.GetText(cancellationToken)?.ToString() ?? "";
-            return (Path: file.Path, Content: text);
+            return new
+            {
+                Path = file.Path,
+                Content = text
+            };
         });
 
         // Step 3: Gather all annotated classes
@@ -36,15 +40,21 @@ internal class APIClientGenerator : IIncrementalGenerator
                 transform: static (ctx, _) =>
                 {
                     var symbol = ctx.SemanticModel.GetDeclaredSymbol((ClassDeclarationSyntax)ctx.Node);
-                    var attr = symbol?.GetAttributes()
+                    if (symbol is null)
+                        return null;
+                    var attr = symbol.GetAttributes()
                         .FirstOrDefault(a => a.AttributeClass?.Name == nameof(APIClientAttribute));
                     if (attr == null)
                         return null;
 
                     var fileName = attr.ConstructorArguments[0].Value as string ?? "";
-                    return ((ISymbol Symbol,string FileName)?)(Symbol: symbol!, FileName: fileName);
+                    return new
+                    {
+                        Symbol = symbol,
+                        TargetFileName = fileName
+                    };
                 })
-            .Where(x => x != null)!;
+            .Where(x => x != null);
 
         // Step 4: Join the attribute info with the additional file content
         var joined = annotatedClasses
@@ -52,109 +62,27 @@ internal class APIClientGenerator : IIncrementalGenerator
             .Select((data, _) =>
             {
                 var (classInfo, files) = data;
-                var match = files.FirstOrDefault(f => f.Path.EndsWith(classInfo?.FileName, StringComparison.OrdinalIgnoreCase));
+                if (classInfo is null || files.Length == 0)
+                    return null;
+
+                var match = files.FirstOrDefault(f => f.Path.EndsWith(classInfo.TargetFileName, StringComparison.OrdinalIgnoreCase));
+                if (match is null)
+                    return null;
 
                 var reader = new OpenApiStringReader();
                 var apiDocument = reader.Read(match.Content, out OpenApiDiagnostic? diag);
 
-                return (classInfo?.Symbol, SpecContent: match.Content, ApiDocument: apiDocument);
-            });
+                return new APIDocumentSourceData(classInfo.Symbol, apiDocument);
+            })
+            .Where(x => x != null);
+
 
         // Step 5: Generate the client
-        context.RegisterSourceOutput(joined, (spc, data) =>
+        context.RegisterSourceOutput(joined, (sourceProductionContext, data) =>
         {
-            if (data.Symbol is null)
-                return;
-            var namespaceName = data.Symbol.ContainingNamespace.ToDisplayString();
-            var className = data.Symbol.Name;
-            if (className is null)
-                return;
+            var handler = new APIDocumentHandler(sourceProductionContext, data!);
+            handler.GenerateCode();
 
-            HashSet<OpenAPIDocumentModelClassDefinition> models = [];
-            HashSet<OpenAPIDocumentOperationMethodDefinition> operations = [];
-            foreach (KeyValuePair<string, OpenApiPathItem> path in data.ApiDocument.Paths)
-            {
-                foreach (KeyValuePair<OperationType, OpenApiOperation> operation in path.Value.Operations)
-                {
-                    var methodName = GetMethodName(path, operation);
-                    var methodContent = $$"""
-                    /// <summary> {{operation.Value.Summary}} <br /> {{operation.Value.Description}} </summary>
-                    /// <remarks> {{operation.Key.ToString().ToUpper()}} {{path.Key}} </remarks>
-                    public async Task {{methodName}}Async()
-                    {
-                        throw new NotImplementedException("{{methodName}} is not implemented yet.");
-                    }
-                    """;
-                    operations.Add(new OpenAPIDocumentOperationMethodDefinition
-                    {
-                        PathName = path.Key,
-                        OperationName = operation.Key,
-                        MethodName = methodName,
-                        MethodContent = methodContent
-                    });
-                }
-            }
-
-            var methods = operations.Select(op => SyntaxFactory.ParseMemberDeclaration(op.MethodContent)!);
-
-            var classDecl = SyntaxFactory.ClassDeclaration(className)
-                .AddModifiers(SyntaxFactory.Token(SyntaxKind.PublicKeyword), SyntaxFactory.Token(SyntaxKind.PartialKeyword));
-
-            foreach (var method in methods)
-            {
-                classDecl = classDecl.AddMembers(method);
-            }
-
-            var nsDecl = SyntaxFactory.NamespaceDeclaration(SyntaxFactory.ParseName(namespaceName))
-                .AddMembers(classDecl);
-
-            var formattedCode = nsDecl.NormalizeWhitespace().ToFullString();
-
-            spc.AddSource($"{className}.g.cs", formattedCode);
         });
     }
-
-
-
-    private static string GetMethodName(KeyValuePair<string, OpenApiPathItem> path, KeyValuePair<OperationType, OpenApiOperation> operation)
-    {
-        if (!string.IsNullOrWhiteSpace(operation.Value.OperationId))
-            return operation.Value.OperationId.UpperCaseFirstChar();
-
-        return "";
-    }
-    private class OpenAPIDocumentModelClassDefinition
-    {
-        public string SchemaName { get; set; } = null!;
-        public string ClassName { get; set; } = null!;
-        public string ClassContent { get; set; } = null!;
-
-        public override int GetHashCode()
-        {
-            return ClassContent.GetHashCode();
-        }
-    }
-    private class OpenAPIDocumentOperationMethodDefinition
-    {
-        public string PathName { get; set; } = null!;
-        public OperationType OperationName { get; set; }
-        public string MethodName { get; set; } = null!;
-        public string MethodContent { get; set; } = null!;
-
-        public override int GetHashCode()
-        {
-            return MethodContent.GetHashCode();
-        }
-    }
 }
-
-file static class Extensions
-{
-    public static string UpperCaseFirstChar(this string value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return value;
-        return char.ToUpper(value[0]) + value.Substring(1);
-    }
-}
-
